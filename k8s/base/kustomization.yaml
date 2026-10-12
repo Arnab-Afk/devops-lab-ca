@@ -1,0 +1,26 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: chat
+resources:
+  - namespace.yaml
+  - postgres.yaml
+  - backend.yaml
+  - frontend.yaml
+  - hpa.yaml
+  - ingress.yaml
+# Generated ConfigMap gets a content hash in its name, so any change rolls the pods automatically
+configMapGenerator:
+  - name: chat-config
+    literals:
+      # Real database: in-cluster Postgres by default, or the Amazon RDS endpoint
+      - POSTGRES_HOST=postgres
+      # What the backend connects to: Postgres directly (v1) or PgBouncer (v2)
+      - DB_HOST=postgres
+      # App login (non-superuser). Use the RDS master username when on RDS
+      - DB_USER=app
+      # Connections opened by EACH backend pod
+      - DB_POOL_SIZE=10
+      - DB_CONNECT_TIMEOUT_MS=3000
+      - STRESS_CPU_MS=20
+      - STRESS_DB_DELAY_S=0.05
+      - REDIS_URL=

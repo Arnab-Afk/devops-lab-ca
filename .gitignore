@@ -4,3 +4,12 @@ coverage/
 .env
 .env.*
 !.env.example
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+terraform.tfvars
+.terraform.lock.hcl
+# Local kubeconfig and load-test output
+kubeconfig
+load-test/results-*.json

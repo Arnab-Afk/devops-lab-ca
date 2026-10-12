@@ -1,0 +1,82 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+    - port: 5432
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-init
+data:
+  # The app gets its own non-superuser role, so the admin (chat) can still log in
+  # via superuser_reserved_connections when the app has used up every slot.
+  01-app-user.sh: |
+    #!/bin/sh
+    set -e
+    psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB" <<SQL
+      CREATE ROLE app LOGIN PASSWORD '$POSTGRES_PASSWORD';
+      ALTER DATABASE $POSTGRES_DB OWNER TO app;
+      ALTER SCHEMA public OWNER TO app;
+    SQL
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres
+spec:
+  serviceName: postgres
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          # Deliberately small connection limit (like a small RDS instance) so the bottleneck shows up quickly
+          args: ["-c", "max_connections=40"]
+          env:
+            - name: POSTGRES_USER
+              value: chat
+            - name: POSTGRES_DB
+              value: chat
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: chat-secrets, key: POSTGRES_PASSWORD }
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          ports:
+            - containerPort: 5432
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "chat"]
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 250m, memory: 256Mi }
+            limits: { cpu: "1", memory: 512Mi }
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+            - name: init
+              mountPath: /docker-entrypoint-initdb.d
+      volumes:
+        - name: init
+          configMap:
+            name: postgres-init
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 2Gi

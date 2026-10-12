@@ -1,0 +1,22 @@
+# /api and /health go straight to the backend, everything else to the Next.js frontend.
+# Uses the cluster's default ingress class (Traefik on k3s; install ingress-nginx on EKS).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: chat
+spec:
+  rules:
+    - http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service: { name: backend, port: { number: 4000 } }
+          - path: /health
+            pathType: Exact
+            backend:
+              service: { name: backend, port: { number: 4000 } }
+          - path: /
+            pathType: Prefix
+            backend:
+              service: { name: frontend, port: { number: 3000 } }

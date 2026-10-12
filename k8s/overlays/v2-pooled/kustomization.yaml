@@ -1,0 +1,22 @@
+# v2: backend pods talk to PgBouncer (connection pooling) and cache hot reads in Redis.
+# Postgres sees at most ~25 connections no matter how far the HPA scales the backend.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: chat
+resources:
+  - ../../base
+  - pgbouncer.yaml
+  - redis.yaml
+configMapGenerator:
+  - name: chat-config
+    behavior: merge
+    literals:
+      - DB_HOST=pgbouncer
+      - REDIS_URL=redis://redis:6379
+images:
+  - name: chat-backend
+    newName: chat-backend
+    newTag: latest
+  - name: chat-frontend
+    newName: chat-frontend
+    newTag: latest

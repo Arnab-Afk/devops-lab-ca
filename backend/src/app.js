@@ -4,6 +4,7 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const db = require('./db');
 const mailer = require('./mailer');
+const cache = require('./cache');
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const JWT_SECRET = () => process.env.JWT_SECRET || 'dev-secret';
@@ -13,6 +14,37 @@ app.use(cors({ origin: process.env.CORS_ORIGIN || '*' }));
 app.use(express.json());
 
 app.get('/health', (req, res) => res.json({ status: 'ok', pod: process.env.HOSTNAME }));
+
+// Shows which pod answered and how many DB connections it holds (used during the HPA demo)
+app.get('/api/stats', (req, res) => {
+  res.json({ pod: process.env.HOSTNAME, uptime: Math.round(process.uptime()), db: db.stats(), cache: cache.enabled() });
+});
+
+function burnCpu(ms) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) crypto.createHash('sha256').update(String(Math.random())).digest();
+}
+
+// Load-test endpoint: CPU work (drives the HPA) + a slow DB read (drives DB connections).
+// With Redis enabled the DB read is cached, so the database only sees a fraction of the traffic.
+app.get('/api/stress', async (req, res, next) => {
+  try {
+    const started = Date.now();
+    burnCpu(Number(process.env.STRESS_CPU_MS || 20));
+    const delay = Number(process.env.STRESS_DB_DELAY_S || 0.05);
+    const { value, cached } = await cache.wrap('stress:summary', 2, async () => {
+      const { rows } = await db.query(
+        `SELECT (SELECT count(*) FROM messages)::int AS messages, (SELECT count(*) FROM users)::int AS users
+         FROM pg_sleep($1)`,
+        [delay]
+      );
+      return rows[0];
+    });
+    res.json({ pod: process.env.HOSTNAME, cached, ms: Date.now() - started, ...value });
+  } catch (err) {
+    next(err);
+  }
+});
 
 // Step 1: sign up / log in with email -> receive a 6-digit code by email
 app.post('/api/auth/request-code', async (req, res, next) => {
@@ -95,7 +127,14 @@ app.post('/api/messages', auth, async (req, res, next) => {
   }
 });
 
+// Errors that mean "the database is the bottleneck": too many clients, or no free connection in time
+const DB_OVERLOAD = /too many clients|remaining connection slots|timeout exceeded when trying to connect|connection terminated/i;
+
 app.use((err, req, res, next) => {
+  if (err.code === '53300' || DB_OVERLOAD.test(err.message)) {
+    console.error('DB overloaded:', err.message);
+    return res.status(503).json({ error: 'Database overloaded', detail: err.message });
+  }
   console.error(err);
   res.status(500).json({ error: 'Internal server error' });
 });

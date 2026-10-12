@@ -1,4 +1,8 @@
-jest.mock('../src/db', () => ({ query: jest.fn(), init: jest.fn() }));
+jest.mock('../src/db', () => ({
+  query: jest.fn(),
+  init: jest.fn(),
+  stats: () => ({ total: 0, idle: 0, waiting: 0, max: 10 }),
+}));
 jest.mock('../src/mailer', () => ({ sendCode: jest.fn() }));
 
 const request = require('supertest');
@@ -63,4 +67,26 @@ test('post and list messages', async () => {
 test('rejects empty message', async () => {
   const res = await request(app).post('/api/messages').set('Authorization', `Bearer ${token}`).send({ body: '  ' });
   expect(res.status).toBe(400);
+});
+
+test('stress endpoint returns DB summary', async () => {
+  process.env.STRESS_CPU_MS = '1';
+  db.query.mockResolvedValue({ rows: [{ messages: 3, users: 2 }] });
+  const res = await request(app).get('/api/stress');
+  expect(res.status).toBe(200);
+  expect(res.body).toMatchObject({ messages: 3, users: 2, cached: false });
+});
+
+test('DB connection exhaustion is reported as 503', async () => {
+  const err = Object.assign(new Error('sorry, too many clients already'), { code: '53300' });
+  db.query.mockRejectedValue(err);
+  const res = await request(app).get('/api/stress');
+  expect(res.status).toBe(503);
+  expect(res.body.error).toBe('Database overloaded');
+});
+
+test('stats reports pool usage', async () => {
+  const res = await request(app).get('/api/stats');
+  expect(res.status).toBe(200);
+  expect(res.body.db).toEqual({ total: 0, idle: 0, waiting: 0, max: 10 });
 });

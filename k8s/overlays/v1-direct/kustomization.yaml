@@ -1,0 +1,14 @@
+# v1: every backend pod connects straight to Postgres.
+# 10 pods x DB_POOL_SIZE 10 = 100 connections > max_connections 40  ->  "too many clients" under load.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: chat
+resources:
+  - ../../base
+images:
+  - name: chat-backend
+    newName: chat-backend
+    newTag: latest
+  - name: chat-frontend
+    newName: chat-frontend
+    newTag: latest
